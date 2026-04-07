@@ -1,0 +1,26 @@
+# Terminal 1 - Backend
+cd backend
+uvicorn app.main:app --reload --port 8000
+
+# Terminal 2 - Frontend
+cd frontend/default
+npm start
+
+# Terminal 3 - ngrok
+ngrok http 8000
+
+Function Call / Tool Calls:
+https://remunerative-neva-mitigable.ngrok-free.dev/vapi/function-call
+https://remunerative-neva-mitigable.ngrok-free.dev/vapi/tool-calls
+
+Status Webhook:
+https://remunerative-neva-mitigable.ngrok-free.dev/vapi/status
+
+Server Webhook:
+https://remunerative-neva-mitigable.ngrok-free.dev/vapi/server
+
+End Call Webhook:
+https://remunerative-neva-mitigable.ngrok-free.dev/vapi/end-call
+
+Config (Testing):
+https://remunerative-neva-mitigable.ngrok-free.dev/vapi/config

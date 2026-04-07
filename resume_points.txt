@@ -1,0 +1,4 @@
+\begin{itemize}[nosep,after=\strut, leftmargin=1.5em, itemsep=1pt,label=$\circ$,topsep=1pt]
+\item \small Architected an AI-powered dispatch system (Python/FastAPI) that automates emergency response by first using an AI model to perform patient triage and assess case severity, then feeding that data into an intelligent algorithm to select the optimal ambulance based on real-time ETA, distance, and vehicle status.
+\item \small Developed a dynamic React (Redux) frontend to serve as a real-time command center, integrating the Google Maps API to visualize live ambulance GPS data and optimized routes, while implementing an AI-powered chat for immediate symptom collection.
+\end{itemize}
