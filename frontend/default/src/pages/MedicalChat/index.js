@@ -288,7 +288,7 @@ const Medicalchat = () => {
         try {
             console.log("Fetching ambulance details from API...");
             // First try to get the most recent case ID
-            const recentCasesRes = await fetch('http://localhost:8000/triage/recent');
+            const recentCasesRes = await fetch('http://localhost:8000/triage/all-recent');
             if (recentCasesRes.ok) {
                 const recentCases = await recentCasesRes.json();
                 
@@ -383,6 +383,7 @@ const Medicalchat = () => {
             console.log("Completion message detected, triggering ambulance sidebar...");
             setTimeout(() => {
                 fetchAmbulanceDetails();
+                setShowAmbulanceSidebar(true);
             }, 1500);
         }
     };

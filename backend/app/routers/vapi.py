@@ -9,6 +9,13 @@ from sqlalchemy.orm import Session
 
 from ..database import get_db
 from .. import models
+from ..llm_config import (
+    LOCAL_LLM_MODEL,
+    LOCAL_LLM_URL,
+    extract_llm_message_content,
+    llm_request_options,
+    reasoning_enabled,
+)
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -89,7 +96,7 @@ def extract_patient_data_from_transcript(transcript: str, call_id: str) -> Dict[
     """
     try:
         # Use the same LLM endpoint to extract structured data from transcript
-        llm_url = "http://localhost:1234/v1/chat/completions"
+        llm_url = LOCAL_LLM_URL
         
         extraction_prompt = f"""
         Extract patient information from this medical emergency conversation transcript.
@@ -107,7 +114,7 @@ def extract_patient_data_from_transcript(transcript: str, call_id: str) -> Dict[
         """
         
         payload = {
-            "model": "openai/gpt-oss-20b",
+            "model": LOCAL_LLM_MODEL,
             "messages": [
                 {
                     "role": "system",
@@ -119,14 +126,15 @@ def extract_patient_data_from_transcript(transcript: str, call_id: str) -> Dict[
                 }
             ],
             "temperature": 0.0,
-            "max_tokens": 300
+            "max_tokens": 300,
+            **llm_request_options(),
         }
         # Use sync httpx client (fix: not in async function)
         with httpx.Client() as client:
             response = client.post(llm_url, json=payload, timeout=30)
             response.raise_for_status()
             data = response.json()
-            extracted_text = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+            extracted_text = extract_llm_message_content(data)
         
         # Parse JSON from response
         extracted_json = json.loads(extracted_text)
@@ -601,7 +609,9 @@ async def get_vapi_config():
         "vapi_phone_number_id_configured": bool(VAPI_PHONE_NUMBER_ID),
         "active_sessions": len(vapi_call_sessions),
         "note": "VAPI uses OpenAI for conversations. Local LLM is used for triage analysis.",
-        "local_llm_url": "http://localhost:1234/v1/chat/completions",
+        "local_llm_url": LOCAL_LLM_URL,
+        "local_llm_model": LOCAL_LLM_MODEL,
+        "local_llm_reasoning": "on" if reasoning_enabled() else "off",
         "webhook_endpoints": {
             "status": "/vapi/status",
             "function_call": "/vapi/function-call",
@@ -653,20 +663,20 @@ async def handle_vapi_model_request(request: Request):
         logger.info(f"VAPI Model Request: {json.dumps(body, indent=2)}")
         
         # Your local LLM endpoint (OpenAI-compatible format)
-        llm_url = "http://localhost:1234/v1/chat/completions"
+        llm_url = LOCAL_LLM_URL
         
         # Extract messages and model from VAPI request
         messages = body.get("messages", [])
-        model = body.get("model", "openai/gpt-oss-20b")
         temperature = body.get("temperature", 0.7)
         max_tokens = body.get("max_tokens", 500)
         
         # Prepare payload for your LLM (OpenAI format)
         llm_payload = {
-            "model": model,
+            "model": LOCAL_LLM_MODEL,
             "messages": messages,
             "temperature": temperature,
-            "max_tokens": max_tokens
+            "max_tokens": max_tokens,
+            **llm_request_options(),
         }
         
         # Forward request to your local LLM
@@ -681,7 +691,7 @@ async def handle_vapi_model_request(request: Request):
             "id": llm_response.get("id", "chatcmpl-default"),
             "object": "chat.completion",
             "created": llm_response.get("created", 0),
-            "model": model,
+            "model": LOCAL_LLM_MODEL,
             "choices": llm_response.get("choices", []),
             "usage": llm_response.get("usage", {})
         }

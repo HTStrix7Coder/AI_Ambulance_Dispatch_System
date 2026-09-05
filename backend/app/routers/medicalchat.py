@@ -12,6 +12,12 @@ from urllib.parse import quote
 
 from .. import models
 from ..database import get_db
+from ..llm_config import (
+    LOCAL_LLM_MODEL,
+    LOCAL_LLM_URL,
+    extract_llm_message_content,
+    llm_request_options,
+)
 from ..prompts import DEFAULT_MEDICAL_SYSTEM_PROMPT
 
 # Set up logging to see the actual error
@@ -194,7 +200,7 @@ async def llm_chat(
     db: Session = Depends(get_db),
 ):
     try:
-        llm_url = "http://localhost:1234/v1/chat/completions"
+        llm_url = LOCAL_LLM_URL
         
         system_prompt = get_system_prompt_text(db)
 
@@ -206,10 +212,11 @@ async def llm_chat(
         chat_sessions[request.session_id].append({"role": "user", "content": request.message})
         
         payload = {
-            "model": "openai/gpt-oss-20b",
+            "model": LOCAL_LLM_MODEL,
             "messages": chat_sessions[request.session_id],
             "temperature": 0.7,
-            "max_tokens": 500
+            "max_tokens": 500,
+            **llm_request_options(),
         }
         
         llm_response_text = ""
@@ -218,7 +225,7 @@ async def llm_chat(
                 response = await client.post(llm_url, json=payload, timeout=30)
                 response.raise_for_status()
                 data = response.json()
-                llm_response_text = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+                llm_response_text = extract_llm_message_content(data)
             except httpx.ConnectError:
                 llm_response_text = "I understand you need medical assistance. Can you please describe your symptoms?"
                 logging.warning("LLM service not available, using fallback response")

@@ -1,45 +1,45 @@
-import React, { useEffect, useRef, useState, useMemo } from 'react';
-import { GoogleMap, LoadScript, DirectionsRenderer, Marker, Polyline } from '@react-google-maps/api';
+import React, { useEffect, useRef, useState } from 'react';
+import { GoogleMap, useJsApiLoader, Marker, Polyline } from '@react-google-maps/api';
 
-// Define libraries outside component to prevent reloading
+// Defined outside the component so the reference stays stable across renders.
+// A changing `libraries` reference is a common cause of reload/"Script error." issues.
 const libraries = ['geometry'];
 
-const GoogleMapsRoute = ({ 
-  patientLat, 
-  patientLon, 
-  ambulanceLat, 
-  ambulanceLon, 
-  routeData, 
+const mapContainerStyle = {
+  width: '100%',
+  height: '350px',
+  borderRadius: '12px',
+  border: '1px solid #e5e7eb',
+  boxShadow: '0 4px 12px rgba(0, 0, 0, 0.08)'
+};
+
+const GoogleMapsRoute = ({
+  patientLat,
+  patientLon,
+  ambulanceLat,
+  ambulanceLon,
+  routeData,
   ambulanceInfo,
   className = "w-full h-96 rounded-lg"
 }) => {
-  console.log('GoogleMapsRoute component rendering with props:', {
-    patientLat,
-    patientLon,
-    ambulanceLat,
-    ambulanceLon,
-    routeData: routeData ? 'Present' : 'Missing',
-    ambulanceInfo: ambulanceInfo ? 'Present' : 'Missing'
-  });
-
   const mapRef = useRef(null);
   const [map, setMap] = useState(null);
-  const [directions, setDirections] = useState(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const [routePath, setRoutePath] = useState(null);
   const [error, setError] = useState(null);
   const [userLocation, setUserLocation] = useState(null);
   const [isLocating, setIsLocating] = useState(false);
 
   // Get API key with fallback
   const apiKey = process.env.REACT_APP_GOOGLE_MAPS_API_KEY || 'AIzaSyBIcmRu-yA62s2Js4RtyJfsFKf9Rm-Xp6w';
-  
-  const mapContainerStyle = {
-    width: '100%',
-    height: '350px',
-    borderRadius: '12px',
-    border: '1px solid #e5e7eb',
-    boxShadow: '0 4px 12px rgba(0, 0, 0, 0.08)'
-  };
+
+  // Load the Google Maps script ONCE via the hook. Unlike <LoadScript>, this does
+  // not re-inject the script when the component re-mounts (e.g. opening the sidebar),
+  // which avoids the cross-origin "Script error." runtime overlay.
+  const { isLoaded, loadError } = useJsApiLoader({
+    id: 'google-map-script',
+    googleMapsApiKey: apiKey,
+    libraries
+  });
 
   const center = {
     lat: patientLat || 13.0827,
@@ -57,42 +57,14 @@ const GoogleMapsRoute = ({
     clickableIcons: true,
     gestureHandling: 'greedy',
     styles: [
-      // Hide POI labels to reduce clutter
-      {
-        featureType: 'poi',
-        elementType: 'labels',
-        stylers: [{ visibility: 'off' }]
-      },
-      // Style roads for better visibility
-      {
-        featureType: 'road',
-        elementType: 'geometry',
-        stylers: [
-          { color: '#f5f5f5' },
-          { weight: 1 }
-        ]
-      },
-      {
-        featureType: 'road',
-        elementType: 'labels',
-        stylers: [{ visibility: 'simplified' }]
-      },
-      // Style water
-      {
-        featureType: 'water',
-        elementType: 'geometry',
-        stylers: [{ color: '#c9c9c9' }]
-      },
-      // Style landscape (includes parks and green areas)
-      {
-        featureType: 'landscape',
-        elementType: 'geometry',
-        stylers: [{ color: '#e8f5e9' }]
-      }
+      { featureType: 'poi', elementType: 'labels', stylers: [{ visibility: 'off' }] },
+      { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#f5f5f5' }, { weight: 1 }] },
+      { featureType: 'road', elementType: 'labels', stylers: [{ visibility: 'simplified' }] },
+      { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#c9c9c9' }] },
+      { featureType: 'landscape', elementType: 'geometry', stylers: [{ color: '#e8f5e9' }] }
     ]
   };
 
-  // Enhanced marker icons that look more like real Google Maps
   const patientMarkerIcon = {
     path: window.google?.maps?.SymbolPath?.CIRCLE || 'circle',
     fillColor: '#FF1744',
@@ -111,76 +83,67 @@ const GoogleMapsRoute = ({
     scale: 15
   };
 
-  // Create custom marker HTML for better appearance
-  const createCustomMarker = (color, text, isAmbulance = false) => {
-    const size = isAmbulance ? 40 : 35;
-    const iconHtml = `
-      <div style="
-        width: ${size}px;
-        height: ${size}px;
-        background-color: ${color};
-        border: 3px solid white;
-        border-radius: 50%;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.3);
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        font-size: ${isAmbulance ? '16px' : '14px'};
-        font-weight: bold;
-        color: white;
-        text-shadow: 0 1px 2px rgba(0,0,0,0.5);
-      ">
-        ${text}
-      </div>
-    `;
-    return iconHtml;
-  };
-
+  // Decode the encoded polyline from the Google Directions API into road-following points.
   useEffect(() => {
-    if (routeData && window.google && window.google.maps && window.google.maps.geometry) {
-      try {
-        // Only process if we have a valid polyline
-        if (routeData.polyline && routeData.polyline.trim() && routeData.polyline.startsWith('_p~iF~ps|U')) {
-          // This is a valid encoded polyline from Google Maps
-          console.log('Processing valid Google Maps polyline');
-          const directionsResult = {
-            routes: [{
-              legs: [{
-                start_location: { lat: ambulanceLat, lng: ambulanceLon },
-                end_location: { lat: patientLat, lng: patientLon },
-                distance: { text: routeData.distance, value: routeData.distance_meters },
-                duration: { text: routeData.duration, value: routeData.duration_seconds },
-                steps: routeData.route_steps || []
-              }],
-              overview_polyline: { points: routeData.polyline }
-            }]
-          };
-          setDirections(directionsResult);
-        } else {
-          console.log('No valid polyline data, will show straight line connection');
-          // Don't set directions to null - let the fallback Polyline handle it
-          setDirections(null);
-        }
-      } catch (err) {
-        console.error('Error processing route data:', err);
-        setError('Error displaying route: ' + err.message);
-        setDirections(null);
-      }
-    } else if (routeData && !window.google) {
-      console.warn('Google Maps not loaded yet');
-    }
-  }, [routeData, patientLat, patientLon, ambulanceLat, ambulanceLon]);
+    if (!isLoaded || !window.google?.maps?.geometry?.encoding) return;
+    if (!routeData) return;
 
-  const onLoad = (map) => {
-    setMap(map);
-    setIsLoading(false);
+    try {
+      if (routeData.polyline && routeData.polyline.trim()) {
+        const decoded = window.google.maps.geometry.encoding
+          .decodePath(routeData.polyline)
+          .map((point) => ({ lat: point.lat(), lng: point.lng() }));
+        console.log(`Decoded road polyline with ${decoded.length} points`);
+        setRoutePath(decoded);
+      } else {
+        console.log('No valid polyline data, will show straight line connection');
+        setRoutePath(null);
+      }
+    } catch (err) {
+      console.error('Error processing route data:', err);
+      setError('Error displaying route: ' + err.message);
+      setRoutePath(null);
+    }
+  }, [isLoaded, routeData, patientLat, patientLon, ambulanceLat, ambulanceLon]);
+
+  // Auto-zoom/pan the map to fit the whole route (like phone navigation).
+  useEffect(() => {
+    if (!map || !window.google) return;
+
+    const bounds = new window.google.maps.LatLngBounds();
+    let hasPoint = false;
+
+    if (routePath && routePath.length > 0) {
+      routePath.forEach((point) => {
+        bounds.extend(point);
+        hasPoint = true;
+      });
+    } else {
+      if (patientLat && patientLon) {
+        bounds.extend({ lat: patientLat, lng: patientLon });
+        hasPoint = true;
+      }
+      if (ambulanceLat && ambulanceLon) {
+        bounds.extend({ lat: ambulanceLat, lng: ambulanceLon });
+        hasPoint = true;
+      }
+    }
+
+    if (hasPoint) {
+      map.fitBounds(bounds, 60);
+    }
+  }, [map, routePath, patientLat, patientLon, ambulanceLat, ambulanceLon]);
+
+  const onLoad = (mapInstance) => {
+    setMap(mapInstance);
+    mapRef.current = mapInstance;
   };
 
   const onUnmount = () => {
     setMap(null);
+    mapRef.current = null;
   };
 
-  // Function to get user's current location
   const getCurrentLocation = () => {
     if (!navigator.geolocation) {
       setError('Geolocation is not supported by this browser.');
@@ -194,66 +157,78 @@ const GoogleMapsRoute = ({
       (position) => {
         const userLat = position.coords.latitude;
         const userLng = position.coords.longitude;
-        
+
         setUserLocation({ lat: userLat, lng: userLng });
-        
+
         if (map) {
-          // Smoothly pan to user location
           map.panTo({ lat: userLat, lng: userLng });
-          map.setZoom(15); // Zoom in to show more detail
+          map.setZoom(15);
         }
-        
+
         setIsLocating(false);
         console.log('User location found:', { lat: userLat, lng: userLng });
       },
-      (error) => {
+      (geoError) => {
         setIsLocating(false);
         let errorMessage = 'Unable to retrieve your location. ';
-        
-        switch (error.code) {
-          case error.PERMISSION_DENIED:
+
+        switch (geoError.code) {
+          case geoError.PERMISSION_DENIED:
             errorMessage += 'Please allow location access to use this feature.';
             break;
-          case error.POSITION_UNAVAILABLE:
+          case geoError.POSITION_UNAVAILABLE:
             errorMessage += 'Location information is unavailable.';
             break;
-          case error.TIMEOUT:
+          case geoError.TIMEOUT:
             errorMessage += 'Location request timed out.';
             break;
           default:
             errorMessage += 'An unknown error occurred.';
             break;
         }
-        
+
         setError(errorMessage);
-        console.error('Geolocation error:', error);
+        console.error('Geolocation error:', geoError);
       },
       {
         enableHighAccuracy: true,
         timeout: 10000,
-        maximumAge: 300000 // 5 minutes
+        maximumAge: 300000
       }
     );
   };
 
-  if (error) {
-    return (
-      <div className={`${className} flex items-center justify-center bg-red-50 border border-red-200 rounded-lg`}>
-        <div className="text-center text-red-600">
-          <p className="font-semibold">Map Error</p>
-          <p className="text-sm">{error}</p>
-        </div>
-      </div>
-    );
-  }
-
-  // Add error handling for API key
+  // Missing/placeholder API key
   if (!apiKey || apiKey === 'YOUR_API_KEY_HERE') {
     return (
       <div className={`${className} flex items-center justify-center bg-yellow-50 border border-yellow-200 rounded-lg`}>
         <div className="text-center text-yellow-600">
           <p className="font-semibold">⚠️ Google Maps API Key Required</p>
           <p className="text-sm">Please set REACT_APP_GOOGLE_MAPS_API_KEY in your .env file</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Script failed to load
+  if (loadError) {
+    return (
+      <div className={`${className} flex items-center justify-center bg-red-50 border border-red-200 rounded-lg`}>
+        <div className="text-center text-red-600">
+          <p className="font-semibold">Map Error</p>
+          <p className="text-sm">Failed to load Google Maps. Check your API key and network.</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Non-fatal route error
+  if (error) {
+    return (
+      <div className={`${className} flex items-center justify-center bg-red-50 border border-red-200 rounded-lg`}>
+        <div className="text-center text-red-600">
+          <p className="font-semibold">Map Error</p>
+          <p className="text-sm">{error}</p>
         </div>
       </div>
     );
@@ -268,28 +243,15 @@ const GoogleMapsRoute = ({
         </h2>
         <p className="text-gray-600 text-xs mt-1">Ambulance route with live traffic</p>
       </div>
-      
-      <LoadScript
-        googleMapsApiKey={apiKey}
-        libraries={libraries}
-        onError={(error) => {
-          console.error('Google Maps LoadScript error:', error);
-          setError('Failed to load Google Maps: ' + error.message);
-        }}
-        onLoad={() => {
-          console.log('Google Maps loaded successfully');
-          setIsLoading(false);
-        }}
-      >
-        {isLoading && (
-          <div className="absolute inset-0 bg-gray-100 rounded-xl flex items-center justify-center z-10">
-            <div className="text-center">
-              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500 mx-auto mb-2"></div>
-              <p className="text-gray-600 text-sm">Loading map...</p>
-            </div>
+
+      {!isLoaded ? (
+        <div className="bg-gray-100 rounded-xl flex items-center justify-center" style={{ height: '350px' }}>
+          <div className="text-center">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500 mx-auto mb-2"></div>
+            <p className="text-gray-600 text-sm">Loading map...</p>
           </div>
-        )}
-        
+        </div>
+      ) : (
         <GoogleMap
           mapContainerStyle={mapContainerStyle}
           center={center}
@@ -297,11 +259,6 @@ const GoogleMapsRoute = ({
           onLoad={onLoad}
           onUnmount={onUnmount}
           options={mapOptions}
-          ref={mapRef}
-          onError={(error) => {
-            console.error('GoogleMap error:', error);
-            setError('Map error: ' + error.message);
-          }}
         >
           {/* Patient Marker */}
           {patientLat && patientLon && (
@@ -309,12 +266,7 @@ const GoogleMapsRoute = ({
               position={{ lat: patientLat, lng: patientLon }}
               title="Patient Location"
               icon={patientMarkerIcon}
-              label={{
-                text: 'P',
-                color: '#FFFFFF',
-                fontSize: '12px',
-                fontWeight: 'bold'
-              }}
+              label={{ text: 'P', color: '#FFFFFF', fontSize: '12px', fontWeight: 'bold' }}
             />
           )}
 
@@ -324,12 +276,7 @@ const GoogleMapsRoute = ({
               position={{ lat: ambulanceLat, lng: ambulanceLon }}
               title={`Ambulance: ${ambulanceInfo?.vehicle_number || 'Unknown'}`}
               icon={ambulanceMarkerIcon}
-              label={{
-                text: 'A',
-                color: '#FFFFFF',
-                fontSize: '12px',
-                fontWeight: 'bold'
-              }}
+              label={{ text: 'A', color: '#FFFFFF', fontSize: '12px', fontWeight: 'bold' }}
             />
           )}
 
@@ -346,50 +293,32 @@ const GoogleMapsRoute = ({
                 strokeWeight: 3,
                 scale: 12
               }}
-              label={{
-                text: 'U',
-                color: '#FFFFFF',
-                fontSize: '12px',
-                fontWeight: 'bold'
-              }}
+              label={{ text: 'U', color: '#FFFFFF', fontSize: '12px', fontWeight: 'bold' }}
             />
           )}
 
-          {/* Directions Renderer with Enhanced Blue Route Line */}
-          {directions && (
-            <DirectionsRenderer
-              directions={directions}
+          {/* Real road route drawn from the decoded Google Directions polyline */}
+          {routePath && routePath.length > 0 && (
+            <Polyline
+              path={routePath}
               options={{
-                polylineOptions: {
-                  strokeColor: '#4285F4',
-                  strokeWeight: 6,
-                  strokeOpacity: 1.0,
-                  strokePattern: null,
-                  geodesic: true
-                },
-                suppressMarkers: true,
-                suppressInfoWindows: false,
-                preserveViewport: false,
-                hideRouteList: false,
-                panel: null,
-                draggable: false,
-                markerOptions: {
-                  clickable: true,
-                  cursor: 'pointer'
-                }
+                strokeColor: '#4285F4',
+                strokeWeight: 6,
+                strokeOpacity: 1.0,
+                geodesic: false
               }}
             />
           )}
 
-          {/* Fallback: Draw straight line if no route data */}
-          {!directions && patientLat && patientLon && ambulanceLat && ambulanceLon && window.google && (
+          {/* Fallback: straight line only if no road polyline is available */}
+          {(!routePath || routePath.length === 0) && patientLat && patientLon && ambulanceLat && ambulanceLon && (
             <Polyline
               path={[
                 { lat: patientLat, lng: patientLon },
                 { lat: ambulanceLat, lng: ambulanceLon }
               ]}
               options={{
-                strokeColor: '#4285F4',
+                strokeColor: '#9CA3AF',
                 strokeWeight: 4,
                 strokeOpacity: 0.8,
                 geodesic: true
@@ -397,49 +326,47 @@ const GoogleMapsRoute = ({
             />
           )}
         </GoogleMap>
-      </LoadScript>
-      
-      
+      )}
+
       {/* Map Control Buttons */}
-      <div className="absolute bottom-3 left-3 flex flex-col space-y-2">
-        {/* Traffic Button */}
-        <button
-          onClick={() => {
-            if (map) {
-              // Toggle traffic layer
-              const trafficLayer = new window.google.maps.TrafficLayer();
-              trafficLayer.setMap(map);
-            }
-          }}
-          className="bg-white hover:bg-gray-50 text-gray-700 hover:text-gray-900 px-4 py-2 rounded-lg shadow-lg border border-gray-200 flex items-center space-x-2 transition-all duration-200 font-medium text-sm"
-        >
-          <div className="flex items-center space-x-1">
-            <div className="w-2 h-2 bg-red-500 rounded-full"></div>
-            <div className="w-2 h-2 bg-yellow-500 rounded-full"></div>
-            <div className="w-2 h-2 bg-green-500 rounded-full"></div>
-          </div>
-          <span>Traffic</span>
-        </button>
+      {isLoaded && (
+        <div className="absolute bottom-3 left-3 flex flex-col space-y-2">
+          {/* Traffic Button */}
+          <button
+            onClick={() => {
+              if (map) {
+                const trafficLayer = new window.google.maps.TrafficLayer();
+                trafficLayer.setMap(map);
+              }
+            }}
+            className="bg-white hover:bg-gray-50 text-gray-700 hover:text-gray-900 px-4 py-2 rounded-lg shadow-lg border border-gray-200 flex items-center space-x-2 transition-all duration-200 font-medium text-sm"
+          >
+            <div className="flex items-center space-x-1">
+              <div className="w-2 h-2 bg-red-500 rounded-full"></div>
+              <div className="w-2 h-2 bg-yellow-500 rounded-full"></div>
+              <div className="w-2 h-2 bg-green-500 rounded-full"></div>
+            </div>
+            <span>Traffic</span>
+          </button>
 
-        {/* Location Pin Button */}
-        <button
-          onClick={getCurrentLocation}
-          disabled={isLocating}
-          className="bg-white hover:bg-gray-50 text-gray-700 hover:text-gray-900 px-4 py-2 rounded-lg shadow-lg border border-gray-200 flex items-center space-x-2 transition-all duration-200 font-medium text-sm disabled:opacity-50 disabled:cursor-not-allowed"
-          title="Find my location"
-        >
-          {isLocating ? (
-            <>
-              <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-500"></div>
-              <span>Finding...</span>
-            </>
-          ) : (
-            <span>My Location</span>
-          )}
-        </button>
-      </div>
-
-
+          {/* Location Pin Button */}
+          <button
+            onClick={getCurrentLocation}
+            disabled={isLocating}
+            className="bg-white hover:bg-gray-50 text-gray-700 hover:text-gray-900 px-4 py-2 rounded-lg shadow-lg border border-gray-200 flex items-center space-x-2 transition-all duration-200 font-medium text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+            title="Find my location"
+          >
+            {isLocating ? (
+              <>
+                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-500"></div>
+                <span>Finding...</span>
+              </>
+            ) : (
+              <span>My Location</span>
+            )}
+          </button>
+        </div>
+      )}
     </div>
   );
 };

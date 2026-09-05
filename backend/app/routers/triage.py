@@ -10,12 +10,17 @@ from typing import List, Optional
 from ..schemas import CaseInput, CaseResponse, RecentCaseResponse, AmbulanceStatusResponse
 from .. import crud, models
 from ..database import get_db
+from ..llm_config import (
+    LOCAL_LLM_MODEL,
+    LOCAL_LLM_URL,
+    extract_llm_message_content,
+    llm_request_options,
+)
 
 
 router = APIRouter(prefix="/triage", tags=["Triage"])
 
-# Define the LM Studio API URL
-API_URL = "http://localhost:1234/v1/chat/completions"
+API_URL = LOCAL_LLM_URL
 
 def generate_unique_vehicle_number(db: Session) -> str:
     """Generate a unique vehicle number for ambulances."""
@@ -61,7 +66,7 @@ async def create_new_case(case: CaseInput, db: Session = Depends(get_db)):
     """
 
     payload = {
-        "model": "mistralai/Mistral-7B-Instruct-v0.2-GGUF",
+        "model": LOCAL_LLM_MODEL,
         "messages": [
             {
                 "role": "system",
@@ -73,7 +78,8 @@ async def create_new_case(case: CaseInput, db: Session = Depends(get_db)):
             }
         ],
         "temperature": 0.0,
-        "max_tokens": 400
+        "max_tokens": 400,
+        **llm_request_options(),
     }
 
     headers = {"Content-Type": "application/json"}
@@ -85,7 +91,7 @@ async def create_new_case(case: CaseInput, db: Session = Depends(get_db)):
             response.raise_for_status()
             response_data = response.json()
             if response_data.get("choices"):
-                ai_response_text = response_data["choices"][0]["message"]["content"].strip()
+                ai_response_text = extract_llm_message_content(response_data)
                 ai_data = json.loads(ai_response_text)
     except httpx.RequestError as e:
         print(f"Error calling LM Studio API: {e}")
